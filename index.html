@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clear eInvoicing — Global Footprint</title>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://d3js.org/topojson.v3.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        heading: ['Syne', 'sans-serif'],
+                        body: ['DM Sans', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef4ff',
+                            100: '#d9e5ff',
+                            200: '#bcd2ff',
+                            300: '#8eb5ff',
+                            400: '#598cff',
+                            500: '#3366ff',
+                            600: '#1a44f5',
+                            700: '#1333e1',
+                            800: '#162bb6',
+                            900: '#182a8f',
+                        },
+                        surface: {
+                            50: '#f8fafc',
+                            100: '#f1f5f9',
+                            200: '#e2e8f0',
+                            300: '#cbd5e1',
+                            400: '#94a3b8',
+                            500: '#64748b',
+                        },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'DM Sans', sans-serif; background: #f8fafc; color: #1e293b; overflow-x: hidden; }
+        h1, h2, h3, h4, h5, h6 { font-family: 'Syne', sans-serif; }
+
+        /* Map styles */
+        .country-default { fill: #e2e8f0; stroke: #cbd5e1; stroke-width: 0.5; transition: fill 0.3s; }
+        .country-default:hover { fill: #d1d8e3; }
+        .country-live {
+            fill: #3366ff;
+            stroke: #1a44f5;
+            stroke-width: 0.8;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            filter: drop-shadow(0 0 3px rgba(51, 102, 255, 0.3));
+        }
+        .country-live:hover {
+            fill: #1a44f5;
+            filter: drop-shadow(0 0 8px rgba(51, 102, 255, 0.5));
+            stroke-width: 1.2;
+        }
+        .country-live.active {
+            fill: #1333e1;
+            filter: drop-shadow(0 0 12px rgba(51, 102, 255, 0.6));
+            stroke: #fff;
+            stroke-width: 1.5;
+        }
+
+        /* Pulse animation for live countries */
+        @keyframes subtlePulse {
+            0%, 100% { filter: drop-shadow(0 0 3px rgba(51, 102, 255, 0.3)); }
+            50% { filter: drop-shadow(0 0 8px rgba(51, 102, 255, 0.45)); }
+        }
+        .country-live { animation: subtlePulse 3s ease-in-out infinite; }
+        .country-live:hover, .country-live.active { animation: none; }
+
+        /* Detail panel */
+        .detail-panel {
+            transform: translateX(100%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .detail-panel.open { transform: translateX(0); }
+
+        /* Overlay */
+        .panel-overlay {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .panel-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Status badges */
+        .badge-live { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .badge-planned { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+        .badge-mandatory { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+        .badge-na { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+        .badge-announced { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
+        .badge-upcoming { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+
+        /* Country pill */
+        .country-pill {
+            transition: all 0.2s ease;
+            border: 1.5px solid #e2e8f0;
+        }
+        .country-pill:hover {
+            border-color: #3366ff;
+            background: #eef4ff;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(51, 102, 255, 0.12);
+        }
+        .country-pill.active {
+            border-color: #3366ff;
+            background: #3366ff;
+            color: #fff;
+            box-shadow: 0 2px 12px rgba(51, 102, 255, 0.25);
+        }
+
+        /* Tooltip */
+        .map-tooltip {
+            position: absolute;
+            pointer-events: none;
+            background: #1e293b;
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            white-space: nowrap;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .map-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #1e293b;
+        }
+
+        /* Stat card */
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            transition: all 0.2s ease;
+        }
+        .stat-card:hover {
+            border-color: #3366ff;
+            box-shadow: 0 4px 16px rgba(51, 102, 255, 0.08);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Map container */
+        #mapContainer {
+            background: linear-gradient(135deg, #f8fafc 0%, #eef4ff 50%, #f8fafc 100%);
+            border-radius: 16px;
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+        }
+
+        /* Region label on map */
+        .region-label {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 10px;
+            fill: #94a3b8;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .detail-panel { width: 100% !important; }
+        }
+
+        /* Entry animations */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-in {
+            animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            opacity: 0;
+        }
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+        .delay-4 { animation-delay: 0.4s; }
+
+        /* Detail panel inner animations */
+        .detail-panel.open .panel-content > * {
+            animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            opacity: 0;
+        }
+        .detail-panel.open .panel-content > *:nth-child(1) { animation-delay: 0.1s; }
+        .detail-panel.open .panel-content > *:nth-child(2) { animation-delay: 0.15s; }
+        .detail-panel.open .panel-content > *:nth-child(3) { animation-delay: 0.2s; }
+        .detail-panel.open .panel-content > *:nth-child(4) { animation-delay: 0.25s; }
+        .detail-panel.open .panel-content > *:nth-child(5) { animation-delay: 0.3s; }
+        .detail-panel.open .panel-content > *:nth-child(6) { animation-delay: 0.35s; }
+        .detail-panel.open .panel-content > *:nth-child(7) { animation-delay: 0.4s; }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-surface-200">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold font-heading text-gray-900 leading-tight">Clear eInvoicing</h1>
+                    <p class="text-xs text-surface-400 font-medium tracking-wide uppercase">Global Footprint</p>
+                </div>
+            </div>
+            <div class="hidden sm:flex items-center gap-2 text-xs text-surface-400">
+                <span class="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                Live across 4 regions
+            </div>
+        </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="max-w-7xl mx-auto px-6 py-8">
+
+        <!-- Stats row -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8 animate-in delay-1">
+            <div class="stat-card px-5 py-4">
+                <p class="text-2xl font-bold font-heading text-brand-600">10</p>
+                <p class="text-sm text-surface-500 mt-0.5 mb-2">Countries</p>
+                <p class="text-xs text-surface-400 leading-relaxed">India, Malaysia, KSA, UAE, Jordan, France, Belgium, Poland, Croatia, Germany</p>
+            </div>
+            <div class="stat-card px-5 py-4">
+                <p class="text-2xl font-bold font-heading text-brand-600">4</p>
+                <p class="text-sm text-surface-500 mt-0.5 mb-2">Regions</p>
+                <p class="text-xs text-surface-400 leading-relaxed">South Asia, Southeast Asia, Middle East, Europe</p>
+            </div>
+            <div class="stat-card px-5 py-4">
+                <p class="text-2xl font-bold font-heading text-brand-600">3</p>
+                <p class="text-sm text-surface-500 mt-0.5 mb-2">Continents</p>
+                <p class="text-xs text-surface-400 leading-relaxed">Asia, Africa, Europe</p>
+            </div>
+        </div>
+
+        <!-- Map -->
+        <div id="mapContainer" class="relative mb-8 animate-in delay-2" style="min-height: 480px;">
+            <div id="map" class="w-full"></div>
+            <div class="map-tooltip" id="tooltip"></div>
+            <!-- Legend -->
+            <div class="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-4 py-3 border border-surface-200 shadow-sm">
+                <p class="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">Legend</p>
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-brand-500 inline-block"></span>
+                        <span class="text-xs text-surface-500">Clear Live</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-surface-200 inline-block"></span>
+                        <span class="text-xs text-surface-500">Not yet</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Country pills -->
+        <div class="animate-in delay-3">
+            <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Quick select</p>
+            <div class="flex flex-wrap gap-2 mb-8" id="countryPills"></div>
+        </div>
+
+        <!-- Region breakdown -->
+        <div class="animate-in delay-4">
+            <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">By Region</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="regionCards"></div>
+        </div>
+
+    </main>
+
+    <!-- Detail panel overlay -->
+    <div class="panel-overlay fixed inset-0 bg-black/20 backdrop-blur-sm z-40" id="panelOverlay" onclick="closePanel()"></div>
+
+    <!-- Detail panel -->
+    <div class="detail-panel fixed top-0 right-0 h-full w-full sm:w-[440px] bg-white shadow-2xl z-50 overflow-y-auto" id="detailPanel">
+        <div class="panel-content p-6" id="panelContent"></div>
+    </div>
+
+    <script>
+    // =========================================================================
+    // DATA
+    // =========================================================================
+    const countriesData = {
+        "356": {
+            name: "India",
+            flag: "\u{1F1EE}\u{1F1F3}",
+            iso: "IND",
+            region: "South Asia",
+            authority: "GSTN / IRP",
+            authorityFull: "Goods & Services Tax Network / Invoice Registration Portal",
+            model: "Clearance",
+            b2b: "Live",
+            b2c: "Upcoming",
+            b2g: "Live",
+            mandateDate: "October 2020",
+            mandateNote: "Mandatory for businesses with turnover > 5 Cr INR. Phased rollout since Oct 2020, progressively lowering thresholds.",
+            highlights: ["First large-scale clearance model in Asia", "Real-time IRN generation", "Threshold-based phased rollout"]
+        },
+        "458": {
+            name: "Malaysia",
+            flag: "\u{1F1F2}\u{1F1FE}",
+            iso: "MYS",
+            region: "Southeast Asia",
+            authority: "LHDN (MyInvois)",
+            authorityFull: "Lembaga Hasil Dalam Negeri / MyInvois Platform",
+            model: "Clearance",
+            b2b: "Live",
+            b2c: "Live",
+            b2g: "Live",
+            mandateDate: "August 2024",
+            mandateNote: "Phased rollout starting Aug 2024 for large taxpayers. Full mandate by Jul 2025 for all businesses.",
+            highlights: ["Covers all transaction types", "Near real-time validation", "Phased by revenue threshold"]
+        },
+        "682": {
+            name: "Saudi Arabia",
+            flag: "\u{1F1F8}\u{1F1E6}",
+            iso: "SAU",
+            region: "Middle East",
+            authority: "ZATCA (FATOORA)",
+            authorityFull: "Zakat, Tax and Customs Authority / FATOORA Platform",
+            model: "Clearance",
+            b2b: "Live",
+            b2c: "Live",
+            b2g: "Live",
+            mandateDate: "Dec 2021 (Phase 1) / Jan 2023 (Phase 2)",
+            mandateNote: "Phase 1 (Generation) since Dec 2021. Phase 2 (Integration/Clearance) in waves since Jan 2023 based on revenue thresholds.",
+            highlights: ["Two-phase approach", "Wave-based integration rollout", "Cryptographic stamping required"]
+        },
+        "784": {
+            name: "UAE",
+            flag: "\u{1F1E6}\u{1F1EA}",
+            iso: "ARE",
+            region: "Middle East",
+            authority: "FTA",
+            authorityFull: "Federal Tax Authority",
+            model: "Reporting (Planned)",
+            b2b: "Planned",
+            b2c: "Planned",
+            b2g: "Planned",
+            mandateDate: "Expected 2026",
+            mandateNote: "eInvoicing mandate announced. Framework under development. Expected to align with regional standards.",
+            highlights: ["Mandate formally announced", "Framework in development", "Clear positioned for Day 1 readiness"]
+        },
+        "250": {
+            name: "France",
+            flag: "\u{1F1EB}\u{1F1F7}",
+            iso: "FRA",
+            region: "Europe",
+            authority: "PPF / PDP",
+            authorityFull: "Portail Public de Facturation / Plateforme de Dematerialisation Partenaire",
+            model: "5-Corner",
+            b2b: "Planned",
+            b2c: "Planned",
+            b2g: "Live (Chorus Pro)",
+            mandateDate: "Sep 2026 (B2B/B2C) / Already live (B2G)",
+            mandateNote: "B2G already mandatory via Chorus Pro. B2B/B2C e-invoicing and e-reporting mandated from Sep 2026 via PPF/PDP model.",
+            highlights: ["Unique 5-corner model in EU", "PDP certification required", "B2G already operational via Chorus Pro"]
+        },
+        "56": {
+            name: "Belgium",
+            flag: "\u{1F1E7}\u{1F1EA}",
+            iso: "BEL",
+            region: "Europe",
+            authority: "Hermes",
+            authorityFull: "Hermes eInvoicing Platform",
+            model: "PEPPOL 4-Corner",
+            b2b: "Mandatory 2026",
+            b2c: "N/A",
+            b2g: "Live",
+            mandateDate: "Jan 2026 (B2B) / Already live (B2G)",
+            mandateNote: "B2G eInvoicing via PEPPOL already mandatory. B2B structured eInvoicing becomes mandatory from Jan 2026.",
+            highlights: ["PEPPOL-based network", "B2G already fully operational", "B2B mandate from Jan 2026"]
+        },
+        "616": {
+            name: "Poland",
+            flag: "\u{1F1F5}\u{1F1F1}",
+            iso: "POL",
+            region: "Europe",
+            authority: "KSeF",
+            authorityFull: "Krajowy System e-Faktur (National eInvoice System)",
+            model: "Clearance",
+            b2b: "Mandatory 2026",
+            b2c: "Planned",
+            b2g: "Live",
+            mandateDate: "Feb 2026 (B2B) / Already live (B2G)",
+            mandateNote: "KSeF mandatory for B2B transactions from Feb 2026. B2G already live. Voluntary usage available since Jan 2022.",
+            highlights: ["National clearance platform", "XML-based structured invoices", "Voluntary adoption since 2022"]
+        },
+        "191": {
+            name: "Croatia",
+            flag: "\u{1F1ED}\u{1F1F7}",
+            iso: "HRV",
+            region: "Europe",
+            authority: "CIS (Fina)",
+            authorityFull: "Central Invoice System / Financijska agencija",
+            model: "Clearance",
+            b2b: "Live",
+            b2c: "Live",
+            b2g: "Live",
+            mandateDate: "Jan 2024 (B2G) / Jul 2025 (B2B)",
+            mandateNote: "B2G eInvoicing mandatory since Jan 2024. B2B mandate effective Jul 2025. Full coverage across transaction types.",
+            highlights: ["Full transaction coverage", "Fina as central operator", "EU-aligned implementation"]
+        },
+        "400": {
+            name: "Jordan",
+            flag: "\u{1F1EF}\u{1F1F4}",
+            iso: "JOR",
+            region: "Middle East",
+            authority: "ISTD (JoFotara)",
+            authorityFull: "Income and Sales Tax Department / JoFotara Platform",
+            model: "Clearance",
+            b2b: "Live",
+            b2c: "Live",
+            b2g: "Live",
+            mandateDate: "April 2025",
+            mandateNote: "eInvoicing mandate via JoFotara platform. Phased rollout starting April 2025 for large taxpayers, with progressive expansion.",
+            highlights: ["JoFotara national platform", "Clearance-based model", "Phased rollout by taxpayer size"]
+        },
+        "276": {
+            name: "Germany",
+            flag: "\u{1F1E9}\u{1F1EA}",
+            iso: "DEU",
+            region: "Europe",
+            authority: "ZRE / OZG",
+            authorityFull: "Zentrale Rechnungseingangsplattform / Onlinezugangsgesetz",
+            model: "PEPPOL 4-Corner",
+            b2b: "Mandatory 2027",
+            b2c: "N/A",
+            b2g: "Live",
+            mandateDate: "Jan 2025 (B2B receiving) / Jan 2027 (B2B sending)",
+            mandateNote: "B2G already mandatory. B2B: mandatory receiving from Jan 2025, mandatory sending from Jan 2027. PEPPOL-based structured invoicing.",
+            highlights: ["Largest EU economy mandate", "Phased send/receive approach", "PEPPOL and XRechnung formats"]
+        }
+    };
+
+    const regions = {
+        "South Asia": { countries: ["356"], color: "#6366f1" },
+        "Southeast Asia": { countries: ["458"], color: "#0891b2" },
+        "Middle East": { countries: ["682", "784", "400"], color: "#d97706" },
+        "Europe": { countries: ["250", "56", "616", "191", "276"], color: "#2563eb" }
+    };
+
+    const liveCountryIds = new Set(Object.keys(countriesData));
+
+    // =========================================================================
+    // MAP RENDERING
+    // =========================================================================
+    const mapContainer = document.getElementById('map');
+    const tooltip = document.getElementById('tooltip');
+
+    const width = mapContainer.parentElement.clientWidth;
+    const height = Math.max(480, width * 0.5);
+    mapContainer.style.height = height + 'px';
+
+    const svg = d3.select('#map')
+        .append('svg')
+        .attr('width', '100%')
+        .attr('height', height)
+        .attr('viewBox', `0 0 ${width} ${height}`);
+
+    const projection = d3.geoNaturalEarth1()
+        .scale(width / 5.5)
+        .translate([width / 2, height / 2]);
+
+    const path = d3.geoPath().projection(projection);
+
+    // Zoom behavior
+    const g = svg.append('g');
+
+    const zoom = d3.zoom()
+        .scaleExtent([1, 8])
+        .on('zoom', (event) => {
+            g.attr('transform', event.transform);
+        });
+
+    svg.call(zoom);
+
+    // Graticule (grid lines)
+    g.append('path')
+        .datum(d3.geoGraticule10())
+        .attr('d', path)
+        .attr('fill', 'none')
+        .attr('stroke', '#e2e8f0')
+        .attr('stroke-width', 0.3);
+
+    // Load world data
+    d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(world => {
+        const countries = topojson.feature(world, world.objects.countries).features;
+
+        // Draw countries
+        g.selectAll('path.country')
+            .data(countries)
+            .enter()
+            .append('path')
+            .attr('class', d => liveCountryIds.has(String(d.id)) ? 'country-live' : 'country-default')
+            .attr('d', path)
+            .attr('data-id', d => d.id)
+            .on('mouseenter', function(event, d) {
+                const id = String(d.id);
+                if (liveCountryIds.has(id)) {
+                    const data = countriesData[id];
+                    tooltip.innerHTML = `${data.flag} ${data.name} <span style="opacity:0.6;font-size:11px;margin-left:4px;">Click to view</span>`;
+                    tooltip.style.opacity = 1;
+                }
+            })
+            .on('mousemove', function(event) {
+                const rect = mapContainer.parentElement.getBoundingClientRect();
+                tooltip.style.left = (event.clientX - rect.left - tooltip.offsetWidth / 2) + 'px';
+                tooltip.style.top = (event.clientY - rect.top - tooltip.offsetHeight - 12) + 'px';
+            })
+            .on('mouseleave', function() {
+                tooltip.style.opacity = 0;
+            })
+            .on('click', function(event, d) {
+                const id = String(d.id);
+                if (liveCountryIds.has(id)) {
+                    openPanel(id);
+                    // Highlight active
+                    d3.selectAll('.country-live').classed('active', false);
+                    d3.select(this).classed('active', true);
+                    // Update pills
+                    document.querySelectorAll('.country-pill').forEach(p => p.classList.remove('active'));
+                    const pill = document.querySelector(`.country-pill[data-id="${id}"]`);
+                    if (pill) pill.classList.add('active');
+                }
+            });
+
+        // Add country labels for live countries
+        countries.forEach(d => {
+            const id = String(d.id);
+            if (liveCountryIds.has(id)) {
+                const centroid = path.centroid(d);
+                if (centroid[0] && centroid[1]) {
+                    g.append('text')
+                        .attr('x', centroid[0])
+                        .attr('y', centroid[1])
+                        .attr('text-anchor', 'middle')
+                        .attr('dy', '-0.3em')
+                        .style('font-family', 'DM Sans, sans-serif')
+                        .style('font-size', '8px')
+                        .style('font-weight', '600')
+                        .style('fill', '#fff')
+                        .style('pointer-events', 'none')
+                        .style('text-shadow', '0 1px 2px rgba(0,0,0,0.4)')
+                        .text(countriesData[id].iso);
+                }
+            }
+        });
+    });
+
+    // =========================================================================
+    // COUNTRY PILLS
+    // =========================================================================
+    const pillsContainer = document.getElementById('countryPills');
+    const sortedCountries = Object.entries(countriesData).sort((a, b) => a[1].name.localeCompare(b[1].name));
+
+    sortedCountries.forEach(([id, data]) => {
+        const pill = document.createElement('button');
+        pill.className = 'country-pill flex items-center gap-2 px-4 py-2.5 rounded-full bg-white text-sm font-medium text-gray-700 cursor-pointer select-none';
+        pill.dataset.id = id;
+        pill.innerHTML = `<span class="text-base leading-none">${data.flag}</span> ${data.name}`;
+        pill.addEventListener('click', () => {
+            openPanel(id);
+            document.querySelectorAll('.country-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            d3.selectAll('.country-live').classed('active', false);
+            d3.select(`.country-live[data-id="${id}"]`).classed('active', true);
+        });
+        pillsContainer.appendChild(pill);
+    });
+
+    // =========================================================================
+    // REGION CARDS
+    // =========================================================================
+    const regionContainer = document.getElementById('regionCards');
+    Object.entries(regions).forEach(([name, region]) => {
+        const card = document.createElement('div');
+        card.className = 'stat-card px-5 py-4 cursor-pointer';
+        const countryList = region.countries.map(id => `${countriesData[id].flag} ${countriesData[id].name}`).join('<br>');
+        card.innerHTML = `
+            <p class="text-xs font-semibold uppercase tracking-wider mb-2" style="color: ${region.color}">${name}</p>
+            <p class="text-sm text-gray-600 leading-relaxed">${countryList}</p>
+            <p class="text-xs text-surface-400 mt-2">${region.countries.length} ${region.countries.length === 1 ? 'country' : 'countries'}</p>
+        `;
+        regionContainer.appendChild(card);
+    });
+
+    // =========================================================================
+    // DETAIL PANEL
+    // =========================================================================
+    function getStatusBadge(status) {
+        let cls = 'badge-na';
+        if (status === 'Live' || status === 'Live (Chorus Pro)') cls = 'badge-live';
+        else if (status === 'Upcoming') cls = 'badge-upcoming';
+        else if (status === 'Planned') cls = 'badge-planned';
+        else if (status.includes('Mandatory')) cls = 'badge-mandatory';
+        else if (status === 'Announced' || status.includes('Expected')) cls = 'badge-announced';
+        else if (status === 'N/A') cls = 'badge-na';
+        return `<span class="inline-block px-2.5 py-1 rounded-full text-xs font-semibold ${cls}">${status}</span>`;
+    }
+
+    function getModelIcon(model) {
+        if (model.includes('Clearance')) return '<svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+        if (model.includes('4-Corner')) return '<svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>';
+        if (model.includes('5-Corner')) return '<svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>';
+        return '<svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>';
+    }
+
+    function openPanel(id) {
+        const data = countriesData[id];
+        if (!data) return;
+
+        const regionColor = Object.entries(regions).find(([_, r]) => r.countries.includes(id))?.[1]?.color || '#3366ff';
+
+        document.getElementById('panelContent').innerHTML = `
+            <!-- Close button -->
+            <div class="flex items-center justify-between mb-6">
+                <button onclick="closePanel()" class="w-8 h-8 rounded-full bg-surface-100 hover:bg-surface-200 flex items-center justify-center transition-colors">
+                    <svg width="16" height="16" fill="none" stroke="#64748b" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+                <span class="text-xs font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full" style="color: ${regionColor}; background: ${regionColor}15;">${data.region}</span>
+            </div>
+
+            <!-- Country header -->
+            <div class="mb-6">
+                <div class="flex items-center gap-3 mb-2">
+                    <span class="text-4xl">${data.flag}</span>
+                    <div>
+                        <h2 class="text-2xl font-bold font-heading text-gray-900">${data.name}</h2>
+                        <p class="text-sm text-surface-400">${data.iso}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Authority -->
+            <div class="mb-5 bg-surface-50 rounded-xl p-4 border border-surface-200">
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">Tax Authority</p>
+                <p class="text-base font-semibold text-gray-900">${data.authority}</p>
+                <p class="text-xs text-surface-400 mt-0.5">${data.authorityFull}</p>
+            </div>
+
+            <!-- Model -->
+            <div class="mb-5 bg-surface-50 rounded-xl p-4 border border-surface-200">
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">eInvoicing Model</p>
+                <p class="text-base font-semibold text-gray-900">${getModelIcon(data.model)}${data.model}</p>
+            </div>
+
+            <!-- B2B / B2C / B2G -->
+            <div class="mb-5">
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Transaction Coverage</p>
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="text-center p-3 bg-surface-50 rounded-xl border border-surface-200">
+                        <p class="text-xs font-semibold text-surface-400 mb-2">B2B</p>
+                        ${getStatusBadge(data.b2b)}
+                    </div>
+                    <div class="text-center p-3 bg-surface-50 rounded-xl border border-surface-200">
+                        <p class="text-xs font-semibold text-surface-400 mb-2">B2C</p>
+                        ${getStatusBadge(data.b2c)}
+                    </div>
+                    <div class="text-center p-3 bg-surface-50 rounded-xl border border-surface-200">
+                        <p class="text-xs font-semibold text-surface-400 mb-2">B2G</p>
+                        ${getStatusBadge(data.b2g)}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mandate dates -->
+            <div class="mb-5 bg-brand-50 rounded-xl p-4 border border-brand-200">
+                <p class="text-xs font-semibold text-brand-600 uppercase tracking-wider mb-1">Mandate Timeline</p>
+                <p class="text-base font-semibold text-brand-800">${data.mandateDate}</p>
+                <p class="text-sm text-brand-600 mt-2 leading-relaxed">${data.mandateNote}</p>
+            </div>
+
+            <!-- Highlights -->
+            <div>
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Key Highlights</p>
+                <ul class="space-y-2">
+                    ${data.highlights.map(h => `
+                        <li class="flex items-start gap-2">
+                            <svg class="w-4 h-4 text-brand-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                            <span class="text-sm text-gray-700">${h}</span>
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+        `;
+
+        document.getElementById('detailPanel').classList.add('open');
+        document.getElementById('panelOverlay').classList.add('visible');
+    }
+
+    function closePanel() {
+        document.getElementById('detailPanel').classList.remove('open');
+        document.getElementById('panelOverlay').classList.remove('visible');
+        d3.selectAll('.country-live').classed('active', false);
+        document.querySelectorAll('.country-pill').forEach(p => p.classList.remove('active'));
+    }
+
+    // Close on Escape
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closePanel();
+    });
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+        const newWidth = mapContainer.parentElement.clientWidth;
+        const newHeight = Math.max(480, newWidth * 0.5);
+        mapContainer.style.height = newHeight + 'px';
+        svg.attr('viewBox', `0 0 ${newWidth} ${newHeight}`);
+    });
+    </script>
+</body>
+</html>
